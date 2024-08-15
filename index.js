@@ -7,10 +7,10 @@ import GoogleStrategy from "passport-google-oauth2";
 import session from "express-session";
 import env from "dotenv";
 
+env.config();
 const app = express();
 const port = 3000;
 const saltRounds = parseInt(process.env.SALT_ROUNDS);
-env.config();
 
 app.use(
   session({
@@ -46,8 +46,8 @@ app.get("/register", (req, res) => {
   res.render("register.ejs");
 });
 
-app.get("/logout", (req, res) => {
-  req.logout(function (err) {
+app.get("/logout", (req, res, next) => {
+  req.logout(err => {
     if (err) {
       return next(err);
     }
@@ -55,14 +55,33 @@ app.get("/logout", (req, res) => {
   });
 });
 
-app.get("/secrets", (req, res) => {
+app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
-    res.render("secrets.ejs");
+    try{
+      const result = await db.query("SELECT secret FROM users WHERE email = $1", [req.user.email]);
+      const secret = result.rows[0].secret;
+      if (secret){
+        res.render("secrets.ejs", {secret: secret})
+      } else {
+        res.render("secrets.ejs", {secret: "Currently I have no secret"})
+      }
 
+    } catch (err){
+      console.log(err);
+    }
   } else {
     res.redirect("/login");
   }
 });
+
+app.get("/submit", (req, res) => {
+  if (req.isAuthenticated()){
+    res.render("submit.ejs");
+
+  } else{
+    res.redirect("/login");
+  }
+})
 
 app.get("/auth/google",
   passport.authenticate("google", {
@@ -113,6 +132,18 @@ app.post("/register", async (req, res) => {
     console.log(err);
   }
 });
+
+app.post("/submit", async (req, res) => {
+  const secret = req.body.secret;
+  
+  try{
+    await db.query("UPDATE users SET secret = $1 WHERE email = $2", [secret, req.user.email]);
+    res.redirect("/secrets")
+
+  } catch (err){
+    console.log(err);
+  }
+})
 
 passport.use("local",
   new Strategy(async function verify(username, password, cb) {
@@ -165,11 +196,17 @@ passport.use("google",
   )
 );
 passport.serializeUser((user, cb) => {
-  cb(null, user);
+  cb(null, user.id);
 });
 
-passport.deserializeUser((user, cb) => {
-  cb(null, user);
+passport.deserializeUser( async (id, cb) => {
+  try{
+    const result = await db.query("SELECT * FROM users WHERE id = $1", [id]);
+    cb(null, result.rows[0]);
+
+  } catch (err){
+    cb(err)
+  }
 });
 
 app.listen(port, () => {
